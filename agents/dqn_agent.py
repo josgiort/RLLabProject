@@ -216,4 +216,5 @@ class DQNAgent:
                 if terminated or truncated or episode_time >= 500:
                     break
                 obs = next_obs
+
         return stats

@@ -1,17 +1,87 @@
+import itertools
 import random
+from heapq import heappop, heappush
 
 import torch
+import heapq
+"""
+class PriorityQueueWithSearch:
+    def __init__(self, max_length):
+        self.heap = []                # Min-heap to store (priority, item)
+        self.entry_finder = {}        # Map items to their (priority, entry)
+        self.REMOVED = "<removed>"    # Placeholder for removed items
+        self.max_length = max_length  # Maximum size of the priority queue
+
+    def add(self, item, priority=1):
+        """
+        Add an item with a priority to the priority queue.
+        If the queue exceeds max_length, remove the lowest-priority item.
+        """
+        if item in self.entry_finder:
+            self.remove(item)  # Remove the old entry
+
+        entry = [priority, item]
+        self.entry_finder[item] = entry
+        heapq.heappush(self.heap, entry)
+
+        # Enforce max length
+        if len(self.entry_finder) > self.max_length:
+            self._remove_lowest_priority()
+
+    def remove(self, item):
+        """
+        Mark an existing item as removed. It will be removed lazily.
+        """
+        entry = self.entry_finder.pop(item)
+        entry[1] = self.REMOVED
+
+    def pop(self):
+        """
+        Remove and return the lowest-priority item from the queue.
+        """
+        while self.heap:
+            priority, item = heapq.heappop(self.heap)
+            if item != self.REMOVED:
+                del self.entry_finder[item]
+                return priority, item
+        raise KeyError("Pop from an empty priority queue")
+
+    def search(self, item):
+        """
+        Search for an item's priority in the queue.
+        """
+        if item in self.entry_finder:
+            priority, _ = self.entry_finder[item]
+            return priority
+        return None
+
+    def _remove_lowest_priority(self):
+        """
+        Remove the lowest-priority item from the queue.
+        """
+        while self.heap:
+            priority, item = heapq.heappop(self.heap)
+            if item != self.REMOVED:  # Ignore removed items
+                del self.entry_finder[item]
+                return priority, item
+        raise KeyError("Queue is empty")
+
+    def __len__(self):
+        """
+        Return the number of valid items in the priority queue.
+        """
+        return len(self.entry_finder)
+    """
+
+
+
+
+
 
 class ReplayBuffer:
     def __init__(self, max_size: int):
-        """
-        Create the replay buffer.
 
-        :param max_size: Maximum number of transitions in the buffer.
-        """
-        self.data = []
-        self.max_size = max_size
-        self.position = 0
+        self.prty_queue = pq = PriorityQueueWithSearch(max_size)
 
     def __len__(self) -> int:
         """Returns how many transitions are currently in the buffer."""
@@ -50,6 +120,9 @@ class ReplayBuffer:
             self.data[self.position] = (obs, action, reward, next_obs, terminated)
             self.position += 1
 
+            max priority
+
+
     def sample(self, batch_size: int) -> torch.Tensor:
         """
         Sample a batch of transitions uniformly and with replacement. The respective elements e.g. states, actions, rewards etc. are stacked
@@ -57,6 +130,9 @@ class ReplayBuffer:
         :param batch_size: The batch size.
         :returns: A tuple of tensors (obs_batch, action_batch, reward_batch, next_obs_batch, terminated_batch), where each tensors is stacked.
         """
+
+        choose only highest priority transitions
+
         # TODO: Your code here
         # Sample uniformly with replacement for a batch size
         samples = random.choices(self.data, k=batch_size)

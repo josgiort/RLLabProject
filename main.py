@@ -1,17 +1,7 @@
-
 from agents.dqn_agent import DQNAgent
 from utils.utils import display_performance
-
-
 import gymnasium as gym
-import minatar.environments  # Import MinAtar environments
-"""
-gym.envs.register(
-    id="MinAtar/Breakout-v1",
-    entry_point="minatar.environments.breakout:Env",  # Adjust this based on your environment
-    max_episode_steps=1000,
-)
-"""
+
 env = gym.make('MinAtar/Breakout-v1', render_mode="rgb_array")
 
 # Print observation and action space infos
