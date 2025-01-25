@@ -1,142 +1,65 @@
-import itertools
-import random
-from heapq import heappop, heappush
-
 import torch
-import heapq
-"""
-class PriorityQueueWithSearch:
-    def __init__(self, max_length):
-        self.heap = []                # Min-heap to store (priority, item)
-        self.entry_finder = {}        # Map items to their (priority, entry)
-        self.REMOVED = "<removed>"    # Placeholder for removed items
-        self.max_length = max_length  # Maximum size of the priority queue
-
-    def add(self, item, priority=1):
-        """
-        Add an item with a priority to the priority queue.
-        If the queue exceeds max_length, remove the lowest-priority item.
-        """
-        if item in self.entry_finder:
-            self.remove(item)  # Remove the old entry
-
-        entry = [priority, item]
-        self.entry_finder[item] = entry
-        heapq.heappush(self.heap, entry)
-
-        # Enforce max length
-        if len(self.entry_finder) > self.max_length:
-            self._remove_lowest_priority()
-
-    def remove(self, item):
-        """
-        Mark an existing item as removed. It will be removed lazily.
-        """
-        entry = self.entry_finder.pop(item)
-        entry[1] = self.REMOVED
-
-    def pop(self):
-        """
-        Remove and return the lowest-priority item from the queue.
-        """
-        while self.heap:
-            priority, item = heapq.heappop(self.heap)
-            if item != self.REMOVED:
-                del self.entry_finder[item]
-                return priority, item
-        raise KeyError("Pop from an empty priority queue")
-
-    def search(self, item):
-        """
-        Search for an item's priority in the queue.
-        """
-        if item in self.entry_finder:
-            priority, _ = self.entry_finder[item]
-            return priority
-        return None
-
-    def _remove_lowest_priority(self):
-        """
-        Remove the lowest-priority item from the queue.
-        """
-        while self.heap:
-            priority, item = heapq.heappop(self.heap)
-            if item != self.REMOVED:  # Ignore removed items
-                del self.entry_finder[item]
-                return priority, item
-        raise KeyError("Queue is empty")
-
-    def __len__(self):
-        """
-        Return the number of valid items in the priority queue.
-        """
-        return len(self.entry_finder)
-    """
-
-
-
-
-
+import numpy as np
+from replay_buffer.SumTree import SumTree
 
 class ReplayBuffer:
-    def __init__(self, max_size: int):
-
-        self.prty_queue = pq = PriorityQueueWithSearch(max_size)
-
-    def __len__(self) -> int:
-        """Returns how many transitions are currently in the buffer."""
-        # TODO: Your code here
-        return len(self.data)
+    def __init__(self, capacity, alpha=0.6):
+        """
+        Prioritized Replay Buffer with Sum-Tree for efficient sampling.
+        :param capacity: Maximum number of transitions.
+        :param alpha: Priority exponent (controls how much prioritization is used).
+        """
+        self.tree = SumTree(capacity)
+        self.alpha = alpha  # Prioritization exponent
 
     def store(self, obs: torch.Tensor, action: torch.Tensor, reward: torch.Tensor, next_obs: torch.Tensor,
               terminated: torch.Tensor):
         """
-        Adds a new transition to the buffer. When the buffer is full, overwrite the oldest transition.
-
-        :param obs: The current observation.
-        :param action: The action.
-        :param reward: The reward.
-        :param next_obs: The next observation.
-        :param terminated: Whether the episode terminated.
+        Add a new transition to the replay buffer with maximum priority.
+        :param transition: (state, action, reward, next_state, done)
         """
-        # TODO: Your code here
         obs = torch.tensor(obs)
         action = torch.tensor(action)
         reward = torch.tensor(reward)
         next_obs = torch.tensor(next_obs)
         terminated = torch.tensor(terminated)
 
-        # If buffer is not full then just append the transitions
-        if self.__len__() < self.max_size:
-            self.data.append((obs, action, reward, next_obs, terminated))
-        # Else don't append but look for the oldest transition and replace it with the new one
-        else:
-            # self.position marks the oldest transition and, since appending always sends new transitions to
-            # right end of list then the oldest one is initially at position 0
-            if self.position == self.max_size:
-                self.position = 0
-            # As we replace the oldest one, the new oldest one is just at the right index from self.position
-            # So we update it by adding to this pointer, except when we reach max possible index, then we go back to 0
-            self.data[self.position] = (obs, action, reward, next_obs, terminated)
-            self.position += 1
+        transition = (obs, action, reward, next_obs, terminated)
+        # Max priority is the highest among the sum tree leaves
+        init_priority = np.max(self.tree.tree[self.tree.capacity - 1:self.tree.capacity - 1 + self.tree.size]) if self.tree.size > 0 else 1.0  # Initial priority (1.0) when tree is empty
+        self.tree.add(init_priority, transition)
 
-            max priority
-
-
-    def sample(self, batch_size: int) -> torch.Tensor:
+    def sample(self, batch_size, beta=0.4):
         """
-        Sample a batch of transitions uniformly and with replacement. The respective elements e.g. states, actions, rewards etc. are stacked
-
-        :param batch_size: The batch size.
-        :returns: A tuple of tensors (obs_batch, action_batch, reward_batch, next_obs_batch, terminated_batch), where each tensors is stacked.
+        Sample a batch of transitions.
+        :param batch_size: Number of samples to return.
+        :param beta: Importance-sampling exponent.
+        :return: (batch, indices, weights)
         """
+        batch = []
+        indices = []
+        priorities = []
+        segment = self.tree.total_priority / batch_size
 
-        choose only highest priority transitions
+        for i in range(batch_size):
+            a = segment * i
+            b = segment * (i + 1)
+            value = np.random.uniform(a, b)
 
-        # TODO: Your code here
-        # Sample uniformly with replacement for a batch size
-        samples = random.choices(self.data, k=batch_size)
-        grouped = list(zip(*samples))
+            index, priority, data = self.tree.get_leaf(value)
+            batch.append(data)
+            indices.append(index)
+            priorities.append(priority)
+
+        # A priority spans a portion in the cumulative priority for a transition
+        # Therefore this priority divided by the cumulative priority would represent
+        # the portion for a transition probability wrt total probability
+        sampling_probabilities = np.array(priorities) / self.tree.total_priority
+        # Importance sampling weights
+        weights = (1 / (len(self.tree.data) * sampling_probabilities)) ** beta
+        weights /= weights.max()
+
+        grouped = list(zip(*batch))
 
         obs_batch = torch.stack(grouped[0], dim=0)
         action_batch = torch.stack(grouped[1], dim=0)
@@ -144,4 +67,13 @@ class ReplayBuffer:
         next_obs_batch = torch.stack(grouped[3], dim=0)
         terminated_batch = torch.stack(grouped[4], dim=0)
 
-        return (obs_batch, action_batch, reward_batch, next_obs_batch, terminated_batch)
+        return (obs_batch, action_batch, reward_batch, next_obs_batch, terminated_batch), indices, weights
+
+    def update_priorities(self, indices, priorities):
+        """
+        Update the priorities of sampled transitions.
+        :param indices: Indices of transitions to update.
+        :param priorities: New priority values.
+        """
+        for index, priority in zip(indices, priorities):
+            self.tree.update(index, (priority + 1e-5) ** self.alpha)

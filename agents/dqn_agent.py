@@ -61,10 +61,12 @@ def update_dqn(
         rew: torch.Tensor,
         next_obs: torch.Tensor,
         tm: torch.Tensor,
+        weights: torch.Tensor
 ):
     """
     Update the DQN network for one optimizer step.
 
+    :param weights:
     :param q: The DQN network.
     :param q_target: The target DQN network.
     :param optimizer: The optimizer.
@@ -77,25 +79,26 @@ def update_dqn(
 
     """
     # TODO: Zero out the gradient
-    # q.zero_grad()
     optimizer.zero_grad()  # zero the gradient buffers
 
     # TODO: Calculate the TD-Target
     with torch.no_grad():
         td_target = rew + gamma * q_target(next_obs).max(dim=1)[0] * (1 - tm.float())
 
-    # TODO: Calculate the loss. Hint: Pytorch has the ".gather()" function, which collects values along a specified axis using some specified indexes
-    loss = F.mse_loss(q(obs).gather(1, act.unsqueeze(1)), td_target.unsqueeze(1))
+    # TODO: Calculate the TD errors
+    predicted_q_values = q(obs).gather(1, act.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
+    td_errors = td_target - predicted_q_values  # Shape: [batch_size]
 
-    # TODO: Backpropagate the loss and step the optimizer
-    loss.backward()
+    # TODO: Calculate the loss with importance sampling weights
+    loss = F.mse_loss(predicted_q_values, td_target, reduction='none')  # Per-sample loss
+    weighted_loss = (loss * weights).mean()  # Apply importance weights
+
+    # TODO: Backpropagate the weighted loss and step the optimizer
+    weighted_loss.backward()
     optimizer.step()
 
-
-
-
-
-
+    # Return the TD errors to update priorities later
+    return td_errors.abs().detach()  # Use absolute TD errors for priorities
 
 
 EpisodeStats = namedtuple("Stats", ["episode_lengths", "episode_rewards"])
@@ -192,10 +195,14 @@ class DQNAgent:
                 self.r_buffer.store(obs, action, reward, next_obs, terminated)
 
                 # TODO: Sample a mini batch from the replay buffer
-                obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = self.r_buffer.sample(self.batch_size)
+                sampled_batch, indices, weights  = self.r_buffer.sample(self.batch_size)
+                obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = sampled_batch
+
+
+                weights = torch.from_numpy(weights)
 
                 # Update the Q network
-                update_dqn(
+                td_errors = update_dqn(
                     self.q,
                     self.q_target,
                     self.optimizer,
@@ -204,8 +211,12 @@ class DQNAgent:
                     act_batch,
                     rew_batch.float(),
                     next_obs_batch.float(),
-                    tm_batch
+                    tm_batch,
+                    weights
                 )
+                # Just for readability
+                updated_priorities = td_errors
+                self.r_buffer.update_priorities(indices, updated_priorities.numpy())
 
                 # Update the current Q target
                 if current_timestep % self.update_freq == 0:
