@@ -83,7 +83,10 @@ def update_dqn(
 
     # TODO: Calculate the TD-Target
     with torch.no_grad():
-        td_target = rew + gamma * q_target(next_obs).max(dim=1)[0] * (1 - tm.float())
+        best_action_index = q(next_obs).argmax(dim=1) # decoupling of action selection
+        td_target = rew + gamma * q_target(next_obs).gather(1, best_action_index.unsqueeze(1)).squeeze(1) * (1 - tm.float()) # decoupling of action evaluation
+
+        #td_target = rew + gamma * q_target(next_obs).max(dim=1)[0] * (1 - tm.float())
 
     # TODO: Calculate the TD errors
     predicted_q_values = q(obs).gather(1, act.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
@@ -197,7 +200,6 @@ class DQNAgent:
                 # TODO: Sample a mini batch from the replay buffer
                 sampled_batch, indices, weights  = self.r_buffer.sample(self.batch_size)
                 obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = sampled_batch
-
 
                 weights = torch.from_numpy(weights)
 
