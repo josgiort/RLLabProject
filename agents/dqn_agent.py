@@ -56,6 +56,7 @@ def update_dqn(
         q_target: nn.Module,
         optimizer: optim.Optimizer,
         gamma: float,
+        n_step: int,
         obs: torch.Tensor,
         act: torch.Tensor,
         rew: torch.Tensor,
@@ -64,44 +65,41 @@ def update_dqn(
         weights: torch.Tensor
 ):
     """
-    Update the DQN network for one optimizer step.
+    Update the DQN network with Multi-Step Learning and Prioritized Experience Replay.
 
-    :param weights:
     :param q: The DQN network.
     :param q_target: The target DQN network.
     :param optimizer: The optimizer.
     :param gamma: The discount factor.
+    :param n_step: Number of steps for multi-step returns.
     :param obs: Batch of current observations.
     :param act: Batch of actions.
-    :param rew: Batch of rewards.
-    :param next_obs: Batch of next observations.
+    :param rew: Batch of n-step rewards (already precomputed in the buffer).
+    :param next_obs: Batch of n-step future observations.
     :param tm: Batch of termination flags.
-
+    :param weights: Importance sampling weights.
+    :return: Absolute TD-errors for updating priorities.
     """
-    # TODO: Zero out the gradient
-    optimizer.zero_grad()  # zero the gradient buffers
+    optimizer.zero_grad()
 
-    # TODO: Calculate the TD-Target
+    # Compute TD-Target with Multi-Step Learning
     with torch.no_grad():
-        best_action_index = q(next_obs).argmax(dim=1) # decoupling of action selection
-        td_target = rew + gamma * q_target(next_obs).gather(1, best_action_index.unsqueeze(1)).squeeze(1) * (1 - tm.float()) # decoupling of action evaluation
+        best_action_index = q(next_obs).argmax(dim=1)  # Double DQN action selection
+        td_target = rew + (gamma ** n_step) * q_target(next_obs).gather(1, best_action_index.unsqueeze(1)).squeeze(1) * (1 - tm.float())
 
-        #td_target = rew + gamma * q_target(next_obs).max(dim=1)[0] * (1 - tm.float())
+    # Compute TD errors
+    predicted_q_values = q(obs).gather(1, act.unsqueeze(1)).squeeze(1)
+    td_errors = td_target - predicted_q_values
 
-    # TODO: Calculate the TD errors
-    predicted_q_values = q(obs).gather(1, act.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
-    td_errors = td_target - predicted_q_values  # Shape: [batch_size]
+    # Compute weighted loss using importance sampling
+    loss = F.mse_loss(predicted_q_values, td_target, reduction='none')
+    weighted_loss = (loss * weights).mean()
 
-    # TODO: Calculate the loss with importance sampling weights
-    loss = F.mse_loss(predicted_q_values, td_target, reduction='none')  # Per-sample loss
-    weighted_loss = (loss * weights).mean()  # Apply importance weights
-
-    # TODO: Backpropagate the weighted loss and step the optimizer
+    # Backpropagation
     weighted_loss.backward()
     optimizer.step()
 
-    # Return the TD errors to update priorities later
-    return td_errors.abs().detach()  # Use absolute TD errors for priorities
+    return td_errors.abs().detach()  # Return TD-errors for priority updates
 
 
 EpisodeStats = namedtuple("Stats", ["episode_lengths", "episode_rewards"])
@@ -113,6 +111,7 @@ class DQNAgent:
                  gamma=0.99,
                  lr=0.001,
                  batch_size=64,
+                 n_step=3,  # Multi-step learning
                  eps_start=1.0,
                  eps_end=0.1,
                  schedule_duration=10_000,
@@ -126,32 +125,31 @@ class DQNAgent:
         :param gamma: The discount factor.
         :param lr: The learning rate.
         :param batch_size: Mini batch size.
+        :param n_step: Number of steps for multi-step learning.
         :param eps_start: The initial epsilon value.
         :param eps_end: The final epsilon value.
         :param schedule_duration: The duration of the schedule (in timesteps).
         :param update_freq: How often to update the Q target.
         :param max_size: Maximum number of transitions in the buffer.
         """
-
         self.env = env
         self.gamma = gamma
         self.batch_size = batch_size
+        self.n_step = n_step  # Store n-step parameter
         self.eps_start = eps_start
         self.eps_end = eps_end
         self.schedule_duration = schedule_duration
         self.update_freq = update_freq
 
-        # TODO: Initialize the Replay Buffer
-        self.r_buffer = ReplayBuffer(maxlen)
+        # TODO: Initialize the Replay Buffer with Multi-Step Support
+        self.r_buffer = ReplayBuffer(maxlen, n_step=n_step, gamma=gamma)  # Adjusted for multi-step
 
-        # TODO: Initialize the Deep Q-Network. Hint: Remember observation_space and action_space
+        # TODO: Initialize the Deep Q-Network
         self.q = DQN(self.env.observation_space.shape, self.env.action_space.n)
 
-        # TODO: Initialize the second Q-Network, the target network. Load the parameters of the first one into the second
+        # TODO: Initialize the second Q-Network, the target network
         self.q_target = DQN(self.env.observation_space.shape, self.env.action_space.n)
-
-        params_dqn = copy.deepcopy(self.q.state_dict())
-        self.q_target.load_state_dict(params_dqn)
+        self.q_target.load_state_dict(self.q.state_dict())
 
         # TODO: Create an ADAM optimizer for the Q-network
         self.optimizer = optim.Adam(self.q.parameters(), lr)
@@ -174,58 +172,56 @@ class DQNAgent:
         epsilon = self.eps_start
 
         for i_episode in range(num_episodes):
-            # Print out which episode we're on, useful for debugging.
             if (i_episode + 1) % 100 == 0:
                 print(
                     f'Episode {i_episode + 1} of {num_episodes}  Time Step: {current_timestep}  Epsilon: {epsilon:.3f}')
 
-            # Reset the environment and get initial observation
             obs, _ = self.env.reset()
+            episode_transitions = []  # Track n-step sequences
 
             for episode_time in itertools.count():
-                # TODO: Get current epsilon value
                 epsilon = linear_epsilon_decay(self.eps_start, self.eps_end, current_timestep, self.schedule_duration)
 
-                # Choose action and execute
                 action = self.policy(torch.as_tensor(obs).unsqueeze(0).float(), epsilon=epsilon)
                 next_obs, reward, terminated, truncated, _ = self.env.step(action)
+
+                # Store sample in the replay buffer (automatically handles n-step processing)
+                self.r_buffer.store(obs, action, reward, next_obs, terminated)
 
                 # Update statistics
                 stats.episode_rewards[i_episode] += reward
                 stats.episode_lengths[i_episode] += 1
 
-                # TODO: Store sample in the replay buffer
-                self.r_buffer.store(obs, action, reward, next_obs, terminated)
-
-                # TODO: Sample a mini batch from the replay buffer
-                sampled_batch, indices, weights  = self.r_buffer.sample(self.batch_size)
+                # Sample a mini-batch
+                sampled_batch, indices, weights = self.r_buffer.sample(self.batch_size)
                 obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = sampled_batch
 
                 weights = torch.from_numpy(weights)
 
-                # Update the Q network
+                # Update Q-network with multi-step learning
                 td_errors = update_dqn(
                     self.q,
                     self.q_target,
                     self.optimizer,
                     self.gamma,
+                    self.n_step,  # Pass n-step parameter
                     obs_batch.float(),
                     act_batch,
-                    rew_batch.float(),
+                    rew_batch.float(),  # This is now n-step return
                     next_obs_batch.float(),
                     tm_batch,
                     weights
                 )
-                # Just for readability
+
+                # Update priorities in the buffer
                 updated_priorities = td_errors
                 self.r_buffer.update_priorities(indices, updated_priorities.numpy())
 
-                # Update the current Q target
+                # Update target network
                 if current_timestep % self.update_freq == 0:
                     self.q_target.load_state_dict(self.q.state_dict())
                 current_timestep += 1
 
-                # Check whether the episode is finished
                 if terminated or truncated or episode_time >= 500:
                     break
                 obs = next_obs
