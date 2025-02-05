@@ -32,12 +32,16 @@ class ReplayBuffer:
         next_obs_n = self.n_step_buffer[-1][3]  # Last next_state in buffer
         done_flag = self.n_step_buffer[-1][4]  # Last done flag
 
-        for i, (_, _, reward, _, done) in enumerate(self.n_step_buffer):
+        for i, (_, _, reward, state_look_ahead, done_look_ahead) in enumerate(self.n_step_buffer):
             total_reward += (self.gamma ** i) * reward  # Discounted n-step reward
-            if done:
-                break  # Stop if episode terminates early
-
-        return obs, action, total_reward, next_obs_n, done_flag
+            if done_look_ahead:
+                next_obs_n = state_look_ahead
+                done_flag =  torch.tensor(True)
+                break
+            else :
+                next_obs_n = state_look_ahead
+                done_flag = torch.tensor(False)
+        return (obs, action, total_reward, next_obs_n, done_flag)
 
     def store(self, obs: torch.Tensor, action: torch.Tensor, reward: torch.Tensor, next_obs: torch.Tensor, terminated: torch.Tensor):
         """
@@ -50,6 +54,12 @@ class ReplayBuffer:
         :param next_obs: Next state.
         :param terminated: Done flag.
         """
+        obs = torch.tensor(obs)
+        action = torch.tensor(action)
+        reward = torch.tensor(reward)
+        next_obs = torch.tensor(next_obs)
+        terminated = torch.tensor(terminated)
+
         self.n_step_buffer.append((obs, action, reward, next_obs, terminated))
 
         if len(self.n_step_buffer) == self.n_step:
@@ -76,6 +86,7 @@ class ReplayBuffer:
             value = np.random.uniform(a, b)
 
             index, priority, data = self.tree.get_leaf(value)
+
             batch.append(data)
             indices.append(index)
             priorities.append(priority)
@@ -88,9 +99,9 @@ class ReplayBuffer:
 
         obs_batch = torch.stack(grouped[0], dim=0)
         action_batch = torch.stack(grouped[1], dim=0)
-        reward_batch = torch.tensor(grouped[2], dtype=torch.float32)
+        reward_batch = torch.stack(grouped[2], dim=0)
         next_obs_batch = torch.stack(grouped[3], dim=0)
-        terminated_batch = torch.tensor(grouped[4], dtype=torch.bool)
+        terminated_batch = torch.stack(grouped[4], dim=0)
 
         return (obs_batch, action_batch, reward_batch, next_obs_batch, terminated_batch), indices, torch.tensor(weights, dtype=torch.float32)
 

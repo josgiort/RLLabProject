@@ -163,11 +163,15 @@ class DQNAgent:
         :param num_episodes: Number of episodes to train.
         :returns: The episode statistics.
         """
+
+
+
         # Keeps track of useful statistics
         stats = EpisodeStats(
             episode_lengths=np.zeros(num_episodes),
             episode_rewards=np.zeros(num_episodes),
         )
+
         current_timestep = 0
         epsilon = self.eps_start
 
@@ -192,30 +196,32 @@ class DQNAgent:
                 stats.episode_rewards[i_episode] += reward
                 stats.episode_lengths[i_episode] += 1
 
-                # Sample a mini-batch
-                sampled_batch, indices, weights = self.r_buffer.sample(self.batch_size)
-                obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = sampled_batch
+                #if episode_time > self.n_step:
+                if len(self.r_buffer.n_step_buffer) >= self.n_step:
+                    # Sample a mini-batch
+                    sampled_batch, indices, weights = self.r_buffer.sample(self.batch_size)
+                    obs_batch, act_batch, rew_batch, next_obs_batch, tm_batch = sampled_batch
 
-                weights = torch.from_numpy(weights)
+                    #weights = torch.from_numpy(weights)
 
-                # Update Q-network with multi-step learning
-                td_errors = update_dqn(
-                    self.q,
-                    self.q_target,
-                    self.optimizer,
-                    self.gamma,
-                    self.n_step,  # Pass n-step parameter
-                    obs_batch.float(),
-                    act_batch,
-                    rew_batch.float(),  # This is now n-step return
-                    next_obs_batch.float(),
-                    tm_batch,
-                    weights
-                )
+                    # Update Q-network with multi-step learning
+                    td_errors = update_dqn(
+                        self.q,
+                        self.q_target,
+                        self.optimizer,
+                        self.gamma,
+                        self.n_step,  # Pass n-step parameter
+                        obs_batch.float(),
+                        act_batch,
+                        rew_batch.float(),  # This is now n-step return
+                        next_obs_batch.float(),
+                        tm_batch,
+                        weights
+                    )
 
-                # Update priorities in the buffer
-                updated_priorities = td_errors
-                self.r_buffer.update_priorities(indices, updated_priorities.numpy())
+                    # Update priorities in the buffer
+                    updated_priorities = td_errors
+                    self.r_buffer.update_priorities(indices, updated_priorities.numpy())
 
                 # Update target network
                 if current_timestep % self.update_freq == 0:
@@ -226,4 +232,9 @@ class DQNAgent:
                     break
                 obs = next_obs
 
-        return stats
+        stats_serializable = {
+            "episode_lengths": stats.episode_lengths.tolist(),  # Convert NumPy array to list
+            "episode_rewards": stats.episode_rewards.tolist()  # Convert NumPy array to list
+        }
+
+        return stats_serializable
